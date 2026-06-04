@@ -1,0 +1,6 @@
+{
+  "name": "3D Transform Visualizer",
+  "description": "An interactive educational web app for learning 3D computer graphics transformations, matrix calculations, wireframe projection, and coordinate space normalization.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

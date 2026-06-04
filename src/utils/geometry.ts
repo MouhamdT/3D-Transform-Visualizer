@@ -1,0 +1,215 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { Vector3D } from '../types';
+
+export interface Model3D {
+  name: string;
+  rawVertices: Vector3D[];
+  // index reference lists (faces list representing polygons)
+  faces: number[][];
+  // edges as indices of vertex pairs (for crisp wireframe rendering)
+  edges: [number, number][];
+}
+
+/**
+ * Generates the edges of a model by extracting all unique pairs from face coordinates
+ */
+function extractEdges(faces: number[][]): [number, number][] {
+  const edgeSet = new Set<string>();
+  const edges: [number, number][] = [];
+
+  faces.forEach(face => {
+    for (let i = 0; i < face.length; i++) {
+      const v1 = face[i];
+      const v2 = face[(i + 1) % face.length];
+      const minVal = Math.min(v1, v2);
+      const maxVal = Math.max(v1, v2);
+      const key = `${minVal}-${maxVal}`;
+
+      if (!edgeSet.has(key)) {
+        edgeSet.add(key);
+        edges.push([v1, v2]);
+      }
+    }
+  });
+
+  return edges;
+}
+
+// Skewed unnormalized Cube: large, displaced from origin, off-center.
+const rawCube: Vector3D[] = [
+  [8.0,  5.0,  -12.0], // 0
+  [14.0, 5.0,  -12.0], // 1
+  [14.0, 11.0, -12.0], // 2
+  [8.0,  11.0, -12.0], // 3
+  [8.0,  5.0,  -18.0], // 4
+  [14.0, 5.0,  -18.0], // 5
+  [14.0, 11.0, -18.0], // 6
+  [8.0,  11.0, -18.0], // 7
+];
+
+const cubeFaces = [
+  [0, 1, 2, 3], // Front
+  [1, 5, 6, 2], // Right
+  [5, 4, 7, 6], // Back
+  [4, 0, 3, 7], // Left
+  [3, 2, 6, 7], // Top
+  [4, 5, 1, 0], // Bottom
+];
+
+// Skewed unnormalized Pyramid (square based): off-center, unequal bounds
+const rawPyramid: Vector3D[] = [
+  [-2.0, 15.0,  2.0], // 0: bottom base
+  [6.0,  15.0,  2.0], // 1: bottom base
+  [6.0,  15.0,  10.0], // 2: bottom base
+  [-2.0, 15.0,  10.0], // 3: bottom base
+  [2.0,  27.0,  6.0],  // 4: apex (skewed height)
+];
+
+const pyramidFaces = [
+  [0, 1, 2, 3], // Base
+  [0, 1, 4],    // Front face
+  [1, 2, 4],    // Right face
+  [2, 3, 4],    // Back face
+  [3, 0, 4],    // Left face
+];
+
+// Skewed unnormalized Triangular Prism
+const rawPrism: Vector3D[] = [
+  [-15.0, -10.0, -5.0], // 0
+  [-5.0,  -10.0, -5.0], // 1
+  [-10.0, -2.0,  -5.0], // 2 (top front)
+  [-15.0, -10.0, 5.0],  // 3
+  [-5.0,  -10.0, 5.0],  // 4
+  [-10.0, -2.0,  5.0],  // 5 (top back)
+];
+
+const prismFaces = [
+  [0, 2, 1],    // Front triangle
+  [3, 4, 5],    // Back triangle
+  [0, 1, 4, 3], // Bottom rectangular face
+  [1, 2, 5, 4], // Right rectangular face
+  [2, 0, 3, 5], // Left rectangular face
+];
+
+export const MODELS: Record<string, Model3D> = {
+  cube: {
+    name: 'Asymmetric Cube',
+    rawVertices: rawCube,
+    faces: cubeFaces,
+    edges: extractEdges(cubeFaces),
+  },
+  pyramid: {
+    name: 'High-Apex Pyramid',
+    rawVertices: rawPyramid,
+    faces: pyramidFaces,
+    edges: extractEdges(pyramidFaces),
+  },
+  prism: {
+    name: 'Triangular Prism',
+    rawVertices: rawPrism,
+    faces: prismFaces,
+    edges: extractEdges(prismFaces),
+  },
+};
+
+export interface NormalizationParams {
+  minBounds: Vector3D;
+  maxBounds: Vector3D;
+  center: Vector3D;
+  extent: Vector3D; // raw difference along X, Y, Z
+  maxExtent: number;
+  scaleFactor: number;
+}
+
+/**
+ * Computes the normalization parameters for any raw vertex sequence
+ */
+export function getNormalizationParams(vertices: Vector3D[]): NormalizationParams {
+  if (vertices.length === 0) {
+    return {
+      minBounds: [0, 0, 0],
+      maxBounds: [0, 0, 0],
+      center: [0, 0, 0],
+      extent: [0, 0, 0],
+      maxExtent: 1,
+      scaleFactor: 1,
+    };
+  }
+
+  let minX = vertices[0][0], maxX = vertices[0][0];
+  let minY = vertices[0][1], maxY = vertices[0][1];
+  let minZ = vertices[0][2], maxZ = vertices[0][2];
+
+  for (let i = 1; i < vertices.length; i++) {
+    const [x, y, z] = vertices[i];
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+    if (z < minZ) minZ = z;
+    if (z > maxZ) maxZ = z;
+  }
+
+  const center: Vector3D = [
+    (minX + maxX) / 2,
+    (minY + maxY) / 2,
+    (minZ + maxZ) / 2,
+  ];
+
+  const dx = maxX - minX;
+  const dy = maxY - minY;
+  const dz = maxZ - minZ;
+  
+  const maxExtent = Math.max(dx, dy, dz);
+  // Scale so max extent is exactly 2.0 (fits nicely in -1.0 to 1.0 bounding volume)
+  const scaleFactor = maxExtent > 0 ? 2.0 / maxExtent : 1;
+
+  return {
+    minBounds: [minX, minY, minZ],
+    maxBounds: [maxX, maxY, maxZ],
+    center,
+    extent: [dx, dy, dz],
+    maxExtent,
+    scaleFactor,
+  };
+}
+
+/**
+ * Transforms a list of vertices based on normalization centering and scale factor.
+ */
+export function normalizeVertices(vertices: Vector3D[], params: NormalizationParams): Vector3D[] {
+  const { center, scaleFactor } = params;
+  return vertices.map(([x, y, z]) => [
+    (x - center[0]) * scaleFactor,
+    (y - center[1]) * scaleFactor,
+    (z - center[2]) * scaleFactor,
+  ]);
+}
+
+/**
+ * Simulates a standard OBJ file contents string for education
+ */
+export function generateOBJText(model: Model3D): string {
+  let text = `# OBJ File generated by 3D Transform Visualizer\n`;
+  text += `# Model Name: ${model.name}\n`;
+  text += `# Vertices count: ${model.rawVertices.length}\n`;
+  text += `# Polygons count: ${model.faces.length}\n\n`;
+
+  model.rawVertices.forEach(([x, y, z]) => {
+    text += `v ${x.toFixed(2)} ${y.toFixed(2)} ${z.toFixed(2)}\n`;
+  });
+
+  text += `\n`;
+
+  model.faces.forEach((face) => {
+    // OBJ indices are 1-based
+    const indexed = face.map(idx => idx + 1).join(' ');
+    text += `f ${indexed}\n`;
+  });
+
+  return text;
+}
